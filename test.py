@@ -45,7 +45,6 @@ def test(data,
     training = model is not None
     if training:  # called by train.py
         device = next(model.parameters()).device  # get model device
-
     else:  # called directly
         set_logging()
         device = select_device(opt.device, batch_size=batch_size)
@@ -312,6 +311,7 @@ if __name__ == '__main__':
     opt = parser.parse_args()
     opt.save_json |= opt.data.endswith('coco.yaml')
     opt.data = check_file(opt.data)  # check file
+    opt.save_dir = Path(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))  # increment run
     print(opt)
     #check_requirements()
 
@@ -339,9 +339,10 @@ if __name__ == '__main__':
 
     elif opt.task == 'study':  # run over a range of settings and save/plot
         # python test.py --task study --data coco.yaml --iou 0.65 --weights yolov7.pt
-        x = list(range(256, 1536 + 128, 128))  # x axis (image sizes)
+        # x = list(range(256, 1536 + 128, 128))  # x axis (image sizes)
+        x = list(range(opt.img_size - 64, opt.img_size + 65, 32))
         for w in opt.weights:
-            f = f'study_{Path(opt.data).stem}_{Path(w).stem}.txt'  # filename to save to
+            f = opt.save_dir / 'study' / f'study_{Path(opt.data).stem}_{Path(w).stem}.txt'  # filename to save to
             y = []  # y axis
             for i in x:  # img-size
                 print(f'\nRunning {f} point {i}...')
@@ -350,4 +351,4 @@ if __name__ == '__main__':
                 y.append(r + t)  # results and times
             np.savetxt(f, y, fmt='%10.4g')  # save
         os.system('zip -r study.zip study_*.txt')
-        plot_study_txt(x=x)  # plot
+        plot_study_txt(path=opt.save_dir, x=x)  # plot
