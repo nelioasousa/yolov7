@@ -45,13 +45,12 @@ def test(data,
     training = model is not None
     if training:  # called by train.py
         device = next(model.parameters()).device  # get model device
-
     else:  # called directly
         set_logging()
         device = select_device(opt.device, batch_size=batch_size)
 
         # Directories
-        save_dir = Path(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))  # increment run
+        # save_dir = Path(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))  # increment run
         (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
 
         # Load model
@@ -312,6 +311,8 @@ if __name__ == '__main__':
     opt = parser.parse_args()
     opt.save_json |= opt.data.endswith('coco.yaml')
     opt.data = check_file(opt.data)  # check file
+    opt.save_dir = Path(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))  # increment run
+    opt.save_dir.mkdir(parents=True, exist_ok=True)
     print(opt)
     #check_requirements()
 
@@ -327,6 +328,7 @@ if __name__ == '__main__':
              opt.augment,
              opt.verbose,
              save_txt=opt.save_txt | opt.save_hybrid,
+             save_dir=opt.save_dir,
              save_hybrid=opt.save_hybrid,
              save_conf=opt.save_conf,
              trace=not opt.no_trace,
@@ -339,15 +341,19 @@ if __name__ == '__main__':
 
     elif opt.task == 'study':  # run over a range of settings and save/plot
         # python test.py --task study --data coco.yaml --iou 0.65 --weights yolov7.pt
-        x = list(range(256, 1536 + 128, 128))  # x axis (image sizes)
+        # x = list(range(256, 1536 + 128, 128))  # x axis (image sizes)
+        x = [opt.img_size - 128, opt.img_size, opt.img_size + 128]
+        study_dir = opt.save_dir / 'study'
+        study_dir.mkdir(exist_ok=True)
         for w in opt.weights:
-            f = f'study_{Path(opt.data).stem}_{Path(w).stem}.txt'  # filename to save to
+            w = Path(w)
+            f = study_dir / f'study_{w.stem}.txt'  # filename to save to
             y = []  # y axis
             for i in x:  # img-size
-                print(f'\nRunning {f} point {i}...')
-                r, _, t = test(opt.data, w, opt.batch_size, i, opt.conf_thres, opt.iou_thres, opt.save_json,
+                print(f'\nRunning checkpoint {w.stem} with size {i}')
+                r, _, t = test(opt.data, str(w), opt.batch_size, i, opt.conf_thres, opt.iou_thres, 
+                               save_json=opt.save_json, save_txt=opt.save_txt, save_dir=opt.save_dir,
                                plots=False, v5_metric=opt.v5_metric)
                 y.append(r + t)  # results and times
             np.savetxt(f, y, fmt='%10.4g')  # save
-        os.system('zip -r study.zip study_*.txt')
-        plot_study_txt(x=x)  # plot
+        plot_study_txt(path=opt.save_dir, x=x)  # plot
