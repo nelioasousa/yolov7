@@ -148,10 +148,6 @@ class LoadImages:  # for inference
         self.video_flag = [False] * ni + [True] * nv
         self.mode = 'image'
         self.cap = None
-        # if any(videos):
-        #     self.new_video(videos[0])  # new video
-        # else:
-        #     self.cap = None
         assert self.nf > 0, f'No images or videos found in {p}. ' \
                             f'Supported formats are:\nimages: {img_formats}\nvideos: {vid_formats}'
 
@@ -173,21 +169,22 @@ class LoadImages:  # for inference
                 self.new_video(path)
                 ret_val, img0 = self.cap.read()
             while not ret_val:
+                print('Exiting video due to reading error or video ended')
+                print('    - file:', path)
                 self.cap.release()
                 self.count += 1
                 if self.count == self.nf:  # last video
                     raise StopIteration
-                self.new_video(self.files[self.count])
+                path = self.files[self.count]
+                self.new_video(path)
                 ret_val, img0 = self.cap.read()
             self.frame += 1
-            print(f'video {self.count + 1}/{self.nf} ({self.frame}/{self.nframes}) {path}: ', end='')
 
         else:
             # Read image
             self.count += 1
             img0 = cv2.imread(path)  # BGR
             assert img0 is not None, 'Image Not Found ' + path
-            #print(f'image {self.count}/{self.nf} {path}: ', end='')
 
         # Padded resize
         img = letterbox(img0, self.img_size, stride=self.stride)[0]
