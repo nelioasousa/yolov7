@@ -497,3 +497,18 @@ def plot_skeleton_kpts(im, kpts, steps, orig_shape=None):
         if pos2[0] % 640 == 0 or pos2[1] % 640 == 0 or pos2[0]<0 or pos2[1]<0:
             continue
         cv2.line(im, pos1, pos2, (int(r), int(g), int(b)), thickness=2)
+
+
+def get_rgb_colors(num_colors, cmin = 0, cmax = 255, gray_colors = True, trim_excess = True):
+    num_splits = math.ceil(num_colors ** (1 / 3))
+    if not gray_colors:
+        while num_splits ** 3 < num_colors + num_splits:
+            num_splits += 1
+    splits = np.linspace(cmin, cmax, num_splits, dtype=np.int32).tolist()
+    colors = [[r, g, b] for r in splits for g in splits for b in splits]
+    if not gray_colors:
+        colors = [c for c in colors if not c[0] == c[1] == c[2]]
+    np.random.shuffle(colors)
+    if trim_excess:
+        return colors[:num_colors]
+    return colors
