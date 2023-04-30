@@ -890,3 +890,22 @@ def increment_path(path, exist_ok=True, sep=''):
         i = [int(m.groups()[0]) for m in matches if m]  # indices
         n = max(i) + 1 if i else 2  # increment number
         return f"{path}{sep}{n}"  # update path
+
+
+def increment_file_path(path):
+    version = 1
+    base, ext = os.path.splitext(path)
+    while os.path.isfile(path):
+        version += 1
+        path = '%s_%d%s' %(base, version, ext)
+    return path
+
+
+def save_argparser_arguments(arguments, save_path, exist_ok):
+    args = vars(arguments)
+    padding = max(len(k) for k in args.keys())
+    lines = [f'{k: <{padding}} : {v}\n' for k, v in args.items()]
+    save_path = os.path.abspath(save_path)
+    save_path = save_path if exist_ok else increment_file_path(save_path)
+    with open(save_path, mode='w') as opt_file:
+        opt_file.writelines(lines)
