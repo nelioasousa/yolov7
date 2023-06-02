@@ -1006,9 +1006,10 @@ def increment_path(path, exist_ok=True, sep=''):
 
 def increment_file_path(path):
     version = 1
+    base, ext = os.path.splitext(path)
     while os.path.isfile(path):
         version += 1
-        path = str(version).join(os.path.splitext(path))
+        path = '%s_%d%s' %(base, version, ext)
     return path
 
 
