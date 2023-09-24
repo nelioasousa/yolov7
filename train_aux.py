@@ -38,7 +38,20 @@ from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
 logger = logging.getLogger(__name__)
 
 
+def freeup_memory(device):
+    from torch.cuda import empty_cache
+    from numba import cuda
+    empty_cache()
+    if device != 'cpu':
+        devices = sorted([int(d) for d in device.split(',')], reverse=True)
+        for device in devices:
+            cuda.select_device(device)
+            cuda.close()
+            cuda.select_device(device)
+
+
 def train(hyp, opt, device, tb_writer=None):
+    freeup_memory(opt.device)
     logger.info(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in hyp.items()))
     save_dir, epochs, batch_size, total_batch_size, weights, rank = \
         Path(opt.save_dir), opt.epochs, opt.batch_size, opt.total_batch_size, opt.weights, opt.global_rank
