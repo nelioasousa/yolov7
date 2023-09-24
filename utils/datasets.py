@@ -4,6 +4,7 @@ import glob
 import logging
 import math
 import os
+import os.path as osp
 import random
 import shutil
 import time
@@ -44,7 +45,7 @@ for orientation in ExifTags.TAGS.keys():
 
 def get_hash(files):
     # Returns a single hash value of a list of files
-    return sum(os.path.getsize(f) for f in files if os.path.isfile(f))
+    return sum(osp.getsize(f) for f in files if osp.isfile(f))
 
 
 def exif_size(img):
@@ -127,82 +128,120 @@ class _RepeatSampler(object):
 
 class LoadImages:  # for inference
     def __init__(self, path, img_size=640, stride=32):
-        p = str(Path(path).absolute())  # os-agnostic absolute path
-        if '*' in p:
-            files = sorted(glob.glob(p, recursive=True))  # glob
-        elif os.path.isdir(p):
-            files = sorted(glob.glob(os.path.join(p, '*.*')))  # dir
-        elif os.path.isfile(p):
-            files = [p]  # files
+        path = str(Path(path).absolute())  # os-agnostic absolute path
+        sequences = {}
+        if '*' in path:
+            files = glob.glob(path, recursive=True)  # glob
+            self._get_sequences(files, sequences_dict=sequences)
+        elif osp.isfile(path):
+            fmt = self._get_file_format(path)
+            assert fmt in vid_formats, '%s is not a supported video file' %path
+            seq_name = osp.splitext(osp.basename(path))[0]
+            sequences[seq_name] = path
+        elif osp.isdir(path):
+            self._get_sequences(path, sequences_dict=sequences)
         else:
-            raise Exception(f'ERROR: {p} does not exist')
-
-        images = [x for x in files if x.split('.')[-1].lower() in img_formats]
-        videos = [x for x in files if x.split('.')[-1].lower() in vid_formats]
-        ni, nv = len(images), len(videos)
-
+            raise Exception('%s not understood' %path)
         self.img_size = img_size
         self.stride = stride
-        self.files = images + videos
-        self.nf = ni + nv  # number of files
-        self.video_flag = [False] * ni + [True] * nv
-        self.mode = 'image'
-        self.cap = None
-        assert self.nf > 0, f'No images or videos found in {p}. ' \
-                            f'Supported formats are:\nimages: {img_formats}\nvideos: {vid_formats}'
+        self.sequences = [(seq_name, seq) for seq_name, seq in sequences.items()]
+        self.num_sequences = len(sequences)
+        assert self.num_sequences, f'No sequences found in {path}. ' \
+                                   f'Supported formats are:\nimages: {img_formats}\nvideos: {vid_formats}'
 
     def __iter__(self):
-        self.count = 0
+        self.current_seq = 0
+        self.cap = None
+        self.mode = None
+        self._load_new_sequence()
         return self
 
     def __next__(self):
-        if self.count == self.nf:
-            raise StopIteration
-        
-        path = self.files[self.count]
-        if self.video_flag[self.count]:
-            # Read video
-            self.mode = 'video'
-            try:
-                ret_val, img0 = self.cap.read()
-            except AttributeError:
-                self.new_video(path)
-                ret_val, img0 = self.cap.read()
-            while not ret_val:
-                print('Exiting video due to reading error or video ended')
-                print('    - file:', path)
-                self.cap.release()
-                self.count += 1
-                if self.count == self.nf:  # last video
-                    raise StopIteration
-                path = self.files[self.count]
-                self.new_video(path)
-                ret_val, img0 = self.cap.read()
-            self.frame += 1
-
+        if self.frame >= self.total_frames:
+            self._load_new_sequence()
+            return next(self)
+        elif self.mode == 'image':
+            img_path = self.seq[self.frame]
+            img0 = cv2.imread(img_path)  # BGR
+            if img0 is None:
+                print('Image not found: %s' %img_path)
+                print('Skipping sequence %s [%d of %d]' %(self.seq_name, self.current_seq, self.num_sequences))
+                self._load_new_sequence()
+                return next(self)
         else:
-            # Read image
-            self.count += 1
-            img0 = cv2.imread(path)  # BGR
-            assert img0 is not None, 'Image Not Found ' + path
-
-        # Padded resize
+            ret_val, img0 = self.cap.read()
+            if not ret_val:
+                print('Exiting video due to reading error or video ended: %s' %self.seq)
+                print('Skipping sequence %s [%d of %d]' %(self.seq_name, self.current_seq, self.num_sequences))
+                self._load_new_sequence()
+                return next(self)
         img = letterbox(img0, self.img_size, stride=self.stride)[0]
-        
-        # Convert
         img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
         img = img[None, :, :, :]
         img = np.ascontiguousarray(img)
+        self.frame += 1
+        return self.seq if self.mode == 'video' else img_path, img, img0
 
-        return path, img, img0, self.cap
+    def _load_new_sequence(self):
+        self.current_seq += 1
+        try:
+            self.cap.release()
+        except AttributeError:
+            pass
+        try:
+            self.seq_name, self.seq = self.sequences[self.current_seq - 1]
+            self.frame = 0
+            self.mode = 'image' if isinstance(self.seq, list) else 'video'
+            if self.mode == 'video':
+                self.cap = cv2.VideoCapture(self.seq)
+                self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            else:
+                self.cap = None
+                self.total_frames = len(self.seq)
+        except IndexError:
+            raise StopIteration()
+        except:
+            self._load_new_sequence()
 
-    def new_video(self, path):
-        self.frame = 0
-        self.cap = cv2.VideoCapture(path)
-        self.nframes = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    def _get_sequences(self, path_or_dir_items, sequences_dict={}):
+        if isinstance(path_or_dir_items, str) and osp.isdir(path_or_dir_items):
+            items = [osp.join(path_or_dir_items, item) for item in os.listdir(path_or_dir_items)]
+        elif isinstance(path_or_dir_items, list):
+            items = path_or_dir_items
+        else:
+            raise ValueError(
+                'path_or_dir_items must be a directory string path or a list of files/folders paths')
+        images = [i for i in items if self._get_file_format(i) in img_formats]
+        videos = [i for i in items if self._get_file_format(i) in vid_formats]
+        directories = [i for i in items if osp.isdir(i)]
+        if len(images):
+            self._check_image_sequence(images)
+            images_seq_name = osp.basename(osp.dirname(images[0]))
+            assert images_seq_name not in sequences_dict, 'More than one sequence with the same name'
+            sequences_dict[images_seq_name] = images
+        if len(videos):
+            seq_names = [osp.splitext(osp.basename(video))[0] for video in videos]
+            for seq_name, video in zip(seq_names, videos):
+                assert seq_name not in sequences_dict, 'More than one sequence with the same name'
+                sequences_dict[seq_name] = video
+        if len(directories):
+            for directory in directories:
+                self._get_sequences(directory, sequences_dict=sequences_dict)
+        return sequences_dict
+
+    def _check_image_sequence(self, images):
+        orgs = set([osp.dirname(img) for img in images])
+        assert len(orgs) == 1, 'Images in sequence are not from the same directory'
+        fmts = set([osp.splitext(img)[1] for img in images])
+        assert len(fmts) == 1, 'Images in sequence do not have the same format'
+        assert len(images) > 1, 'Image sequence only contains one image'
+        images.sort()
+    
+    def _get_file_format(cls, file):
+        return osp.splitext(file)[1][1:].lower()
 
     def __len__(self):
-        return self.nf  # number of files
+        return self.num_sequences  # number of sequences
 
 
 class LoadWebcam:  # for inference
@@ -269,7 +308,7 @@ class LoadStreams:  # multiple IP or RTSP cameras
         self.img_size = img_size
         self.stride = stride
 
-        if os.path.isfile(sources):
+        if osp.isfile(sources):
             with open(sources, 'r') as f:
                 sources = [x.strip() for x in f.read().strip().splitlines() if len(x.strip())]
         else:
@@ -483,7 +522,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 assert im.format.lower() in img_formats, f'invalid image format {im.format}'
 
                 # verify labels
-                if os.path.isfile(lb_file):
+                if osp.isfile(lb_file):
                     nf += 1  # label found
                     with open(lb_file, 'r') as f:
                         l = [x.split() for x in f.read().strip().splitlines()]
@@ -1242,7 +1281,7 @@ class Albumentations:
 
 def create_folder(path='./new'):
     # Create folder
-    if os.path.exists(path):
+    if osp.exists(path):
         shutil.rmtree(path)  # delete output folder
     os.makedirs(path)  # make new output folder
 
